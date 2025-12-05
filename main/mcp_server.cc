@@ -201,12 +201,18 @@ void McpServer::AddCommonTools() {
     auto music = board.GetMusic();
      if (music) {
          AddTool("self.music.play_song",
-                 "Play a specified song. Use this tool when user requests to play music. It will automatically get song details and start streaming playback.\n"
-                 "Args:\n"
-                 "  `song_name`: The name of the song to play (required).\n"
-                 "  `artist_name`: The artist name of the song to play (optional, defaults to empty string).\n"
-                 "Return:\n"
-                 "  Playback status information. No confirmation needed, plays the song immediately.",
+				 "Play a specified song ONLINE. Đây là chế độ PHÁT NHẠC MẶC ĐỊNH.\n"
+				 "Khi người dùng nói: 'phát nhạc', 'mở nhạc', 'phát bài hát', "
+				 "'play music', 'play song', 'mở bài ...', AI phải ưu tiên dùng tool này.\n"
+				 "\n"
+				 "Chỉ dùng SD card nếu người dùng nói rõ: 'nhạc trong thẻ nhớ', "
+				 "'nhạc offline', 'bài trong thẻ', 'SD card', 'chạy nhạc nội bộ', v.v.\n"
+				 "\n"
+				 "Args:\n"
+				 "  song_name: Tên bài hát (bắt buộc)\n"
+				 "  artist_name: Tên ca sĩ (tùy chọn)\n"
+				 "Return:\n"
+				 "  Phát bài hát online ngay lập tức.\n",
                  PropertyList({
                      Property("song_name", kPropertyTypeString),      // Song name (required)
                      Property("artist_name", kPropertyTypeString, "") // Artist name (optional, defaults to empty string)
@@ -379,10 +385,20 @@ void McpServer::AddCommonTools() {
 
 		// ================== 1) PLAYBACK CƠ BẢN ==================
 		// Gộp: self.sdmusic.play, pause, stop, next, prev
-		AddTool(
-			"self.sdmusic.playback",
-			"Control basic SD music playback.\n"
-			"action = play | pause | stop | next | prev\n",
+		AddTool("self.sdmusic.playback",
+				"Điều khiển phát nhạc từ THẺ NHỚ (SD card).\n"
+				"KHÔNG dùng tool này khi người dùng chỉ nói: 'phát nhạc', 'mở bài', "
+				"'play music', 'phát bài hát'.\n"
+				"\n"
+				"Tool này chỉ dùng khi người dùng nói rõ:\n"
+				"- nhạc trong thẻ nhớ\n"
+				"- nhạc offline\n"
+				"- phát bài trong thẻ\n"
+				"- SD card\n"
+				"- chạy nhạc từ thẻ\n"
+				"\n"
+				"action = play | pause | stop | next | prev\n"
+				"Return: trạng thái điều khiển SD card.\n",			
 			PropertyList({
 				Property("action", kPropertyTypeString),
 			}),

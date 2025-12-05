@@ -196,6 +196,15 @@ bool Esp32Radio::PlayUrl(const std::string& radio_url, const std::string& statio
     
     // Stop previous playback
     Stop();
+	
+	// --- CLEAN DISPLAY RAM BEFORE STARTING RADIO ---
+	auto display = Board::GetInstance().GetDisplay();
+	if (display) {
+		display->StopFFT();                 // Dừng FFT canvas cũ (nếu có)
+		display->ReleaseAudioBuffFFT();    // Giải phóng buffer FFT
+		display->SetMusicInfo(nullptr);    // Xóa thông tin nhạc cũ
+		ESP_LOGI(TAG, "[PATCH] Display memory released before starting radio");
+	}
     
     // Set current station information
     current_station_url_ = radio_url;
@@ -296,125 +305,127 @@ std::vector<std::string> Esp32Radio::GetStationList() const {
 
 void Esp32Radio::DownloadRadioStream(const std::string& radio_url) {
     ESP_LOGD(TAG, "Starting radio stream download from: %s", radio_url.c_str());
-    
-    // Validate URL format
+
     if (radio_url.empty() || radio_url.find("http") != 0) {
         ESP_LOGE(TAG, "Invalid URL format: %s", radio_url.c_str());
         is_downloading_ = false;
         return;
     }
-    
+
     auto network = Board::GetInstance().GetNetwork();
     auto http = network->CreateHttp(0);
-    
+
     http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
     http->SetHeader("Accept", "*/*");
-    http->SetHeader("Range", "bytes=0-");  // Support range requests
+    http->SetHeader("Range", "bytes=0-");
 
-    // Add ESP32 authentication headers
-    // add_auth_headers(http.get());
-    
-    // Log for debugging HTTPS vs HTTP
     bool is_https = (radio_url.find("https://") == 0);
     ESP_LOGI(TAG, "Connecting to %s stream: %s", is_https ? "HTTPS" : "HTTP", radio_url.c_str());
-    
+
+    auto display = Board::GetInstance().GetDisplay();
+
     if (!http->Open("GET", radio_url)) {
         ESP_LOGE(TAG, "Failed to connect to radio stream URL: %s", radio_url.c_str());
         is_downloading_ = false;
-        
-        // Notify user about connection error
-        auto& board = Board::GetInstance();
-        auto display = board.GetDisplay();
-        if (display) {
-            display->SetMusicInfo("Radio connection error");
-        }
+        if (display) display->SetMusicInfo("Radio connection error");
         return;
     }
-    
+
     int status_code = http->GetStatusCode();
-    
-    // Handle redirect status codes - Http class does not support GetHeader()
     if (status_code >= 300 && status_code < 400) {
-        ESP_LOGW(TAG, "HTTP %d redirect detected but cannot follow (no GetHeader method)", status_code);
+        ESP_LOGW(TAG, "HTTP %d redirect detected but cannot follow", status_code);
         http->Close();
         is_downloading_ = false;
         return;
     }
-    
     if (status_code != 200 && status_code != 206) {
         ESP_LOGE(TAG, "HTTP GET failed with status code: %d", status_code);
         http->Close();
         is_downloading_ = false;
         return;
     }
-    
+
     ESP_LOGI(TAG, "Started downloading radio stream, status: %d", status_code);
-    
-    // Read audio data in chunks
-    const size_t chunk_size = 4096;  // 4KB per chunk
+
+    const size_t chunk_size = 4096;
     char* buffer = new char[chunk_size];
     size_t total_downloaded = 0;
     size_t total_print_bytes = 0;
-    
+    const int kMaxReconnectAttempts = 3;
+    int reconnect_attempts = 0;
+
     while (is_downloading_ && is_playing_) {
         int bytes_read = http->Read(buffer, chunk_size);
-        if (bytes_read < 0) {
-            ESP_LOGE(TAG, "Failed to read radio data: error code %d", bytes_read);
-            break;
+
+        // ---- HANDLE READ ERRORS & RECONNECT ----
+        if (bytes_read < 0 || bytes_read == 0) {
+            reconnect_attempts++;
+            ESP_LOGW(TAG, "Stream lost (bytes_read=%d), trying reconnect (%d/%d)...", bytes_read, reconnect_attempts, kMaxReconnectAttempts);
+
+            if (display) {
+                display->SetMusicInfo("🔌 Mất kết nối radio...\n⟳ Đang thử lại...");
+            }
+
+            if (reconnect_attempts > kMaxReconnectAttempts) {
+                ESP_LOGE(TAG, "Exceeded max reconnect attempts");
+                break;
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(1500));  // Wait 1.5s
+            http->Close();
+
+            if (!http->Open("GET", radio_url)) {
+                ESP_LOGE(TAG, "Reconnect failed at attempt %d", reconnect_attempts);
+                continue;
+            } else {
+                ESP_LOGI(TAG, "Reconnect success at attempt %d", reconnect_attempts);
+                continue;
+            }
         }
-        if (bytes_read == 0) {
-            ESP_LOGI(TAG, "Radio stream ended, total: %d bytes", total_downloaded);
-            // For live streams, this usually means the connection was interrupted, attempt to reconnect
-            vTaskDelay(pdMS_TO_TICKS(1000));  // Wait 1 second before continuing
-            continue;
-        }
+
+        reconnect_attempts = 0;
 
         if (bytes_read < 16) {
             ESP_LOGI(TAG, "Data chunk too small: %d bytes", bytes_read);
         }
-        
-        // VOV streams use AAC+ format - log format detection
+
         if (total_downloaded == 0 && bytes_read >= 4) {
             if (memcmp(buffer, "ID3", 3) == 0) {
-                ESP_LOGI(TAG, "Detected MP3 file with ID3 tag");
-            } else if (buffer[0] == 0xFF && (buffer[1] & 0xE0) == 0xE0) {
+                ESP_LOGI(TAG, "Detected MP3 with ID3 tag");
+            } else if ((buffer[0] & 0xFF) == 0xFF && (buffer[1] & 0xE0) == 0xE0) {
                 ESP_LOGI(TAG, "Detected MP3 file header");
             } else if (memcmp(buffer, "RIFF", 4) == 0) {
-                ESP_LOGI(TAG, "Detected WAV file");
+                ESP_LOGI(TAG, "Detected WAV");
             } else if (memcmp(buffer, "fLaC", 4) == 0) {
-                ESP_LOGI(TAG, "Detected FLAC file");
+                ESP_LOGI(TAG, "Detected FLAC");
             } else if (memcmp(buffer, "OggS", 4) == 0) {
-                ESP_LOGI(TAG, "Detected OGG file");
+                ESP_LOGI(TAG, "Detected OGG");
             } else {
-                ESP_LOGI(TAG, "Unknown audio format, first 4 bytes: %02X %02X %02X %02X", 
-                        (unsigned char)buffer[0], (unsigned char)buffer[1], 
-                        (unsigned char)buffer[2], (unsigned char)buffer[3]);
+                ESP_LOGI(TAG, "Unknown format, first 4 bytes: %02X %02X %02X %02X",
+                         (unsigned char)buffer[0], (unsigned char)buffer[1],
+                         (unsigned char)buffer[2], (unsigned char)buffer[3]);
             }
         }
-        
-        // Create audio data chunk
+
         uint8_t* chunk_data = (uint8_t*)heap_caps_malloc(bytes_read, MALLOC_CAP_SPIRAM);
         if (!chunk_data) {
             ESP_LOGE(TAG, "Failed to allocate memory for radio chunk");
             break;
         }
         memcpy(chunk_data, buffer, bytes_read);
-        
-        // Wait for buffer space
+
         {
             std::unique_lock<std::mutex> lock(buffer_mutex_);
             buffer_cv_.wait(lock, [this] { return buffer_size_ < MAX_BUFFER_SIZE || !is_downloading_; });
-            
+
             if (is_downloading_) {
                 audio_buffer_.push(RadioAudioChunk(chunk_data, bytes_read));
                 buffer_size_ += bytes_read;
                 total_downloaded += bytes_read;
                 total_print_bytes += bytes_read;
-                
-                // Notify playback thread of new data
                 buffer_cv_.notify_one();
-                
-                if (total_print_bytes >= (128 * 1024)) {  // Log progress every 128KB
+
+                if (total_print_bytes >= (128 * 1024)) {
                     total_print_bytes = 0;
                     ESP_LOGI(TAG, "Downloaded %d bytes, buffer size: %d", total_downloaded, buffer_size_);
                 }
@@ -424,8 +435,8 @@ void Esp32Radio::DownloadRadioStream(const std::string& radio_url) {
             }
         }
     }
+
     delete[] buffer;
-    
     http->Close();
 
     if (is_downloading_) {
@@ -435,13 +446,16 @@ void Esp32Radio::DownloadRadioStream(const std::string& radio_url) {
     }
 
     is_downloading_ = false;
-    
-    // Notify the playback thread that the download is complete
+
     {
         std::lock_guard<std::mutex> lock(buffer_mutex_);
         buffer_cv_.notify_all();
     }
-    
+
+    if (total_downloaded < 1024 && display) {
+        display->SetMusicInfo("❌ Không thể kết nối radio.");
+    }
+
     ESP_LOGI(TAG, "Radio stream download thread finished");
 }
 
@@ -484,7 +498,7 @@ void Esp32Radio::PlayRadioStream() {
     uint8_t* read_ptr = nullptr;
     
     // Allocate input buffer (for both MP3 and AAC)
-    input_buffer = (uint8_t*)heap_caps_malloc(8192, MALLOC_CAP_SPIRAM);
+    input_buffer = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_SPIRAM);
     if (!input_buffer) {
         ESP_LOGE(TAG, "Failed to allocate input buffer");
         is_playing_ = false;
@@ -623,26 +637,49 @@ void Esp32Radio::PlayRadioStream() {
             }
             
             if (out_frame.decoded_size > 0) {
-                // First decode -> get stream info
-                if (!aac_info_ready_) {
-                    esp_audio_simple_dec_get_info(aac_decoder_, &aac_info_);
-                    aac_info_ready_ = true;
-                    ESP_LOGI(TAG, "AAC stream info: %d Hz, %d bits, %d ch",
-                            aac_info_.sample_rate, aac_info_.bits_per_sample, aac_info_.channel);
-                }
-                
-                int bits_per_sample = (aac_info_.bits_per_sample > 0) ? aac_info_.bits_per_sample : 16;
-                int bytes_per_sample = bits_per_sample / 8;
-                int channels = (aac_info_.channel > 0) ? aac_info_.channel : 2;
-                
-                int total_samples = out_frame.decoded_size / bytes_per_sample;
-                int samples_per_channel = (channels > 0) ? (total_samples / channels) : total_samples;
-                
-                int16_t* pcm_in = reinterpret_cast<int16_t*>(out_frame.buffer);
-                std::vector<int16_t> mono_buffer;
-                int16_t* final_pcm_data = nullptr;
-                int final_sample_count = 0;
-                
+
+				// First decode -> get stream info
+				if (!aac_info_ready_) {
+					esp_audio_simple_dec_get_info(aac_decoder_, &aac_info_);
+					aac_info_ready_ = true;
+
+					ESP_LOGI(TAG, "AAC stream info: %d Hz, %d bits, %d ch",
+							 aac_info_.sample_rate,
+							 aac_info_.bits_per_sample,
+							 aac_info_.channel);
+
+					// ===============================
+					//   HIỂN THỊ THÔNG TIN AAC LÊN LCD
+					// ===============================
+					auto& board = Board::GetInstance();
+					auto display = board.GetDisplay();
+
+					if (display) {
+						std::ostringstream oss;
+
+						oss << "RADIO 《" << current_station_name_ << "》\n"
+							<< "AAC " << aac_info_.sample_rate << "Hz  "
+							<< aac_info_.bits_per_sample << "bit  "
+							<< aac_info_.channel << "ch";
+
+						display->SetMusicInfo(oss.str().c_str());
+
+						ESP_LOGI(TAG, "Displayed AAC info on LCD: %s", oss.str().c_str());
+					}
+				}
+
+				int bits_per_sample = (aac_info_.bits_per_sample > 0) ? aac_info_.bits_per_sample : 16;
+				int bytes_per_sample = bits_per_sample / 8;
+				int channels = (aac_info_.channel > 0) ? aac_info_.channel : 2;
+
+				int total_samples = out_frame.decoded_size / bytes_per_sample;
+				int samples_per_channel = (channels > 0) ? (total_samples / channels) : total_samples;
+
+				int16_t* pcm_in = reinterpret_cast<int16_t*>(out_frame.buffer);
+				std::vector<int16_t> mono_buffer;
+				int16_t* final_pcm_data = nullptr;
+				int final_sample_count = 0;
+							
                 if (channels == 2) {
                     // Downmix stereo -> mono
                     mono_buffer.resize(samples_per_channel);

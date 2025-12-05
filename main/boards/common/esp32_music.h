@@ -36,6 +36,8 @@ public:
 private:
     std::string last_downloaded_data_;
     std::string current_music_url_;
+	std::string artist_name_;   
+    std::string title_name_;
     std::string current_song_name_;
     bool song_name_displayed_;
 	bool full_info_displayed_;
