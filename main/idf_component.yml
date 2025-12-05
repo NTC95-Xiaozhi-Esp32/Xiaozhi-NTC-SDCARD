@@ -19,7 +19,7 @@ dependencies:
   espressif/esp_lcd_panel_io_additions: ^1.0.1
   78/esp_lcd_nv3023: ~1.0.0
   NTC95-Xiaozhi-Esp32:
-  git: https://github.com/NTC95-Xiaozhi-Esp32/NTC_esp-wifi-connect.git
+    git: https://github.com/NTC95-Xiaozhi-Esp32/NTC_esp-wifi-connect.git
     version: "main"
   78/esp-opus-encoder: ~2.4.1
   78/esp-ml307: ~3.3.7
