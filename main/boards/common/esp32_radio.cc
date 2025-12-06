@@ -71,16 +71,12 @@ void Esp32Radio::InitializeRadioStations() {
     // Vietnamese VOV radio stations - AAC/AAC+ format only
     // Volume values: 1.0 = 100%, 2.0 = 200%, etc.
 
-    // === HÀ NỘI (AAC) ===
-    radio_stations_["JOY_FM989"] = RadioStation("JoyFM 98.9 - Sức khỏe & Đời sống", "https://stream.joyfm.vn/live/playlist.m3u8", "Đài Hà Nội – Sức khỏe & Đời sống", "Health/Lifestyle", 4.3f);
-
     // === VOV - KÊNH QUỐC GIA ===
     radio_stations_["VOV1"]         = RadioStation("VOV 1 - Thời sự",                   "https://stream.vovmedia.vn/vov-1",       "Tin tức & thời sự quốc gia",               "News/Talk",            4.5f);
     radio_stations_["VOV2"]         = RadioStation("VOV 2 - Văn hóa & Giáo dục",        "https://stream.vovmedia.vn/vov-2",       "Văn hóa – giáo dục – xã hội",              "Culture/Education",    4.0f);
     radio_stations_["VOV3"]         = RadioStation("VOV 3 - Âm nhạc & Giải trí",        "https://stream.vovmedia.vn/vov-3",       "Nhạc & giải trí tổng hợp",                 "Music/Entertainment",  4.4f);
     radio_stations_["VOV5"]         = RadioStation("VOV 5 - Đối ngoại",                 "https://stream.vovmedia.vn/vov5",        "Kênh tiếng Việt & quốc tế",                "International",        4.1f);
-    radio_stations_["VOV_FM89"]     = RadioStation("VOV FM89 - Sức khỏe & Đời sống",    "https://stream.vovmedia.vn/vovfm89",     "Sức khỏe – đời sống",                      "Health/Lifestyle",     3.9f);
-
+    
     // === VOV GIAO THÔNG ===
     radio_stations_["VOV_GT_HN"]    = RadioStation("VOV Giao thông Hà Nội",             "https://stream.vovmedia.vn/vovgt-hn",    "Giao thông & đời sống Hà Nội",             "Traffic",              4.7f);
     radio_stations_["VOV_GT_HCM"]   = RadioStation("VOV Giao thông TP.HCM",             "https://stream.vovmedia.vn/vovgt-hcm",   "Giao thông & đời sống TP.HCM",             "Traffic",              4.7f);
